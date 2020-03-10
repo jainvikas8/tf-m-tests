@@ -13,6 +13,9 @@ endif()
 
 add_library(tfm_test_suite_multi_core_ns STATIC EXCLUDE_FROM_ALL)
 
+#CMSIS
+include_directories(${TFM_TEST_REPO_PATH}/CMSIS/RTOS2/Include ABSOLUTE)
+
 target_sources(tfm_test_suite_multi_core_ns
     PRIVATE
         non_secure/multi_core_ns_interface_testsuite.c
