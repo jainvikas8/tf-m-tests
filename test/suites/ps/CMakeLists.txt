@@ -11,6 +11,9 @@ if (NOT TFM_PARTITION_PROTECTED_STORAGE)
     return()
 endif()
 
+#CMSIS
+include_directories(${TFM_TEST_REPO_PATH}/CMSIS/RTOS2/Include ABSOLUTE)
+
 ####################### Non Secure #############################################
 
 add_library(tfm_test_suite_ps_ns STATIC EXCLUDE_FROM_ALL)

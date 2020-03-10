@@ -7,14 +7,12 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include "os_wrapper/mutex.h"
-#include "os_wrapper/thread.h"
-#include "os_wrapper/tick.h"
 #include "psa/client.h"
 #include "psa/internal_trusted_storage.h"
 #include "psa_manifest/sid.h"
 #include "test_framework_helpers.h"
 #include "tfm_ns_mailbox.h"
+#include "cmsis_os2.h"
 
 #ifdef TFM_MULTI_CORE_MULTI_CLIENT_CALL
 /* Max number of child threads for multiple outstanding PSA client call test */
@@ -93,13 +91,13 @@ static void wait_child_thread_completion(struct test_params *params_array,
 {
     bool is_complete;
     uint8_t i;
-    void *mutex = params_array[0].mutex_handle;
+    osMutexId_t mutex = params_array[0].mutex_handle;
 
     for (i = 0; i < child_idx; i++) {
         while (1) {
-            os_wrapper_mutex_acquire(mutex, OS_WRAPPER_WAIT_FOREVER);
+            osMutexAcquire(mutex, osWaitForever);
             is_complete = params_array[i].is_complete;
-            os_wrapper_mutex_release(mutex);
+            osMutexRelease(mutex);
 
             if (is_complete) {
                 break;
@@ -109,46 +107,62 @@ static void wait_child_thread_completion(struct test_params *params_array,
 }
 
 static void multi_client_call_test(struct test_result_t *ret,
-                                   os_wrapper_thread_func test_runner,
+                                   osThreadFunc_t test_runner,
                                    int32_t stack_size,
                                    int32_t nr_rounds,
                                    bool is_mixed)
 {
     uint8_t i, nr_child;
-    void *current_thread_handle;
-    uint32_t current_thread_priority, err, total_ticks, total_calls, avg_ticks;
-    void *mutex_handle;
-    void *child_ids[NR_MULTI_CALL_CHILD];
+    osThreadId_t current_thread_handle;
+    osPriority_t current_thread_priority;
+    osMutexId_t mutex_handle;
+    osThreadId_t child_ids[NR_MULTI_CALL_CHILD];
+    uint32_t total_ticks, total_calls, avg_ticks;
     struct ns_mailbox_stats_res_t stats_res;
     struct test_params parent_params, params[NR_MULTI_CALL_CHILD];
+    const osMutexAttr_t attr = {
+        .name = NULL,
+        .attr_bits = osMutexPrioInherit, /* Priority inheritance is recommended
+                                          * to enable if it is supported.
+                                          * For recursive mutex and the ability
+                                          * of auto release when owner being
+                                          * terminated is not required.
+                                          */
+        .cb_mem = NULL,
+        .cb_size = 0U
+    };
+    osThreadAttr_t task_attribs = {
+        .tz_module = 1,
+        .stack_size = stack_size,
+    };
 
     tfm_ns_mailbox_tx_stats_init();
 
-    current_thread_handle = os_wrapper_thread_get_handle();
+    current_thread_handle = osThreadGetId();
     if (!current_thread_handle) {
         TEST_FAIL("Failed to get current thread ID\r\n");
         return;
     }
 
-    err = os_wrapper_thread_get_priority(current_thread_handle,
-                                         &current_thread_priority);
-    if (err == OS_WRAPPER_ERROR) {
+    current_thread_priority = osThreadGetPriority(current_thread_handle);
+    if (current_thread_priority == osPriorityError) {
         TEST_FAIL("Failed to get current thread priority\r\n");
         return;
     }
+    task_attribs.priority = current_thread_priority;
 
     /*
      * Create a mutex to protect the synchronization between child test thread
      * about the completion status.
-     * The best way is to use os_wrapper_thread_wait/set_flag(). However, due to
-     * the implementation of the wait event functions in some RTOS, if the
-     * child test threads already exit before the main thread starts to wait for
+     * The best way is to use osThreadFlagsWait/Set(). However, due to the
+     * implementation of the wait event functions in some RTOS, if the child
+     * test threads already exit before the main thread starts to wait for
      * event (main thread itself has to perform test too), the main thread
      * cannot receive the event flags.
      * As a result, use a flag and a mutex to make sure the main thread can
      * capture the completion event of child threads.
      */
-    mutex_handle = os_wrapper_mutex_create();
+    mutex_handle = osMutexNew(&attr);
     if (!mutex_handle) {
         TEST_FAIL("Failed to create a mutex\r\n");
         return;
@@ -163,11 +177,7 @@ static void multi_client_call_test(struct test_result_t *ret,
         params[i].is_complete = false;
         params[i].is_parent = false;
 
-        child_ids[i] = os_wrapper_thread_new(NULL,
-                                             stack_size,
-                                             test_runner,
-                                             &params[i],
-                                             current_thread_priority);
+        child_ids[i] = osThreadNew(test_runner, &params[i], &task_attribs);
         if (!child_ids[i]) {
             break;
         }
@@ -184,7 +194,7 @@ static void multi_client_call_test(struct test_result_t *ret,
      * Try to make test threads to run together.
      */
     for (i = 0; i < nr_child; i++) {
-        os_wrapper_thread_set_flag(child_ids[i], TEST_CHILD_EVENT_FLAG(i));
+        osThreadFlagsSet(child_ids[i], TEST_CHILD_EVENT_FLAG(i));
     }
 
     /* Use current thread to execute a test instance */
@@ -196,7 +206,7 @@ static void multi_client_call_test(struct test_result_t *ret,
     /* Wait for all the test threads completes */
     wait_child_thread_completion(params, nr_child);
 
-    os_wrapper_mutex_delete(mutex_handle);
+    osMutexDelete(mutex_handle);
 
     if (parent_params.ret != TEST_PASSED) {
         ret->val = TEST_FAILED;
@@ -237,7 +247,7 @@ enum test_status_t multi_client_call_light_loop(struct test_params *params)
     uint32_t i, version, total_ticks;
     uint32_t nr_rounds = params->nr_rounds;
 
-    total_ticks = os_wrapper_get_tick();
+    total_ticks = osKernelGetTickCount();
 
     for (i = 0; i < nr_rounds; i++) {
         version = psa_framework_version();
@@ -247,7 +257,7 @@ enum test_status_t multi_client_call_light_loop(struct test_params *params)
         }
     }
 
-    params->total_ticks = os_wrapper_get_tick() - total_ticks;
+    params->total_ticks = osKernelGetTickCount() - total_ticks;
     params->nr_calls = nr_rounds;
 
     return TEST_PASSED;
@@ -259,17 +269,18 @@ static void multi_client_call_light_runner(void *argument)
 
     if (!params->is_parent) {
         /* Wait for the signal to kick-off the test */
-        os_wrapper_thread_wait_flag(TEST_CHILD_EVENT_FLAG(params->child_idx),
-                                    OS_WRAPPER_WAIT_FOREVER);
+        osThreadFlagsWait(TEST_CHILD_EVENT_FLAG(params->child_idx),
+                          osFlagsWaitAll,
+                          osWaitForever);
     }
 
     params->ret = multi_client_call_light_loop(params);
 
     if (!params->is_parent) {
         /* Mark this child thread has completed */
-        os_wrapper_mutex_acquire(params->mutex_handle, OS_WRAPPER_WAIT_FOREVER);
+        osMutexAcquire(params->mutex_handle, osWaitForever);
         params->is_complete = true;
-        os_wrapper_mutex_release(params->mutex_handle);
+        osMutexRelease(params->mutex_handle);
     }
 }
 
@@ -295,7 +306,7 @@ enum test_status_t multi_client_call_heavy_loop(const psa_storage_uid_t uid,
     char rd_data[ITS_DATA_LEN];
     const psa_storage_create_flags_t flags = PSA_STORAGE_FLAG_NONE;
 
-    total_ticks = os_wrapper_get_tick();
+    total_ticks = osKernelGetTickCount();
 
     for (i = 0; i < rounds; i++) {
         /* Set a data in the asset */
@@ -320,7 +331,7 @@ enum test_status_t multi_client_call_heavy_loop(const psa_storage_uid_t uid,
         }
     }
 
-    params->total_ticks = os_wrapper_get_tick() - total_ticks;
+    params->total_ticks = osKernelGetTickCount() - total_ticks;
     params->nr_calls = rounds * 3;
 
     return TEST_PASSED;
@@ -333,17 +344,18 @@ static void multi_client_call_heavy_runner(void *argument)
 
     if (!params->is_parent) {
         /* Wait for the signal to kick-off the test */
-        os_wrapper_thread_wait_flag(TEST_CHILD_EVENT_FLAG(params->child_idx),
-                                    OS_WRAPPER_WAIT_FOREVER);
+        osThreadFlagsWait(TEST_CHILD_EVENT_FLAG(params->child_idx),
+                          osFlagsWaitAll,
+                          osWaitForever);
     }
 
     params->ret = multi_client_call_heavy_loop(uid, params);
 
     if (!params->is_parent) {
         /* Mark this child thread has completed */
-        os_wrapper_mutex_acquire(params->mutex_handle, OS_WRAPPER_WAIT_FOREVER);
+        osMutexAcquire(params->mutex_handle, osWaitForever);
         params->is_complete = true;
-        os_wrapper_mutex_release(params->mutex_handle);
+        osMutexRelease(params->mutex_handle);
     }
 }
 
@@ -366,8 +378,9 @@ static void multi_client_call_ooo_runner(void *argument)
 
     if (!params->is_parent) {
         /* Wait for the signal to kick-off the test */
-        os_wrapper_thread_wait_flag(TEST_CHILD_EVENT_FLAG(params->child_idx),
-                                    OS_WRAPPER_WAIT_FOREVER);
+        osThreadFlagsWait(TEST_CHILD_EVENT_FLAG(params->child_idx),
+                                    osFlagsWaitAll,
+                                    osWaitForever);
     }
 
     if (!params->child_idx % 2) {
@@ -379,9 +392,9 @@ static void multi_client_call_ooo_runner(void *argument)
 
     if (!params->is_parent) {
         /* Mark this child thread has completed */
-        os_wrapper_mutex_acquire(params->mutex_handle, OS_WRAPPER_WAIT_FOREVER);
+        osMutexAcquire(params->mutex_handle, osWaitForever);
         params->is_complete = true;
-        os_wrapper_mutex_release(params->mutex_handle);
+        osMutexRelease(params->mutex_handle);
     }
 }
 
