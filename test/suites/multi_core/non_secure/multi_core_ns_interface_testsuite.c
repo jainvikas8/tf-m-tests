@@ -247,7 +247,7 @@ enum test_status_t multi_client_call_light_loop(struct test_params *params)
     uint32_t i, version, total_ticks;
     uint32_t nr_rounds = params->nr_rounds;
 
-    total_ticks = os_wrapper_get_tick();
+    total_ticks = osKernelGetTickCount();
 
     for (i = 0; i < nr_rounds; i++) {
         version = psa_framework_version();
@@ -257,7 +257,7 @@ enum test_status_t multi_client_call_light_loop(struct test_params *params)
         }
     }
 
-    params->total_ticks = os_wrapper_get_tick() - total_ticks;
+    params->total_ticks = osKernelGetTickCount() - total_ticks;
     params->nr_calls = nr_rounds;
 
     return TEST_PASSED;
@@ -306,7 +306,7 @@ enum test_status_t multi_client_call_heavy_loop(const psa_storage_uid_t uid,
     char rd_data[ITS_DATA_LEN];
     const psa_storage_create_flags_t flags = PSA_STORAGE_FLAG_NONE;
 
-    total_ticks = os_wrapper_get_tick();
+    total_ticks = osKernelGetTickCount();
 
     for (i = 0; i < rounds; i++) {
         /* Set a data in the asset */
@@ -331,7 +331,7 @@ enum test_status_t multi_client_call_heavy_loop(const psa_storage_uid_t uid,
         }
     }
 
-    params->total_ticks = os_wrapper_get_tick() - total_ticks;
+    params->total_ticks = osKernelGetTickCount() - total_ticks;
     params->nr_calls = rounds * 3;
 
     return TEST_PASSED;
@@ -378,8 +378,9 @@ static void multi_client_call_ooo_runner(void *argument)
 
     if (!params->is_parent) {
         /* Wait for the signal to kick-off the test */
-        os_wrapper_thread_wait_flag(TEST_CHILD_EVENT_FLAG(params->child_idx),
-                                    OS_WRAPPER_WAIT_FOREVER);
+        osThreadFlagsWait(TEST_CHILD_EVENT_FLAG(params->child_idx),
+                                    osFlagsWaitAll,
+                                    osWaitForever);
     }
 
     if (!params->child_idx % 2) {
@@ -391,9 +392,9 @@ static void multi_client_call_ooo_runner(void *argument)
 
     if (!params->is_parent) {
         /* Mark this child thread has completed */
-        os_wrapper_mutex_acquire(params->mutex_handle, OS_WRAPPER_WAIT_FOREVER);
+        osMutexAcquire(params->mutex_handle, osWaitForever);
         params->is_complete = true;
-        os_wrapper_mutex_release(params->mutex_handle);
+        osMutexRelease(params->mutex_handle);
     }
 }
 
