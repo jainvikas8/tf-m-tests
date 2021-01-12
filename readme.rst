@@ -10,6 +10,13 @@ as the TF-M core and various secure partitions.
 There is also the `psa-arch-tests`_ suite which mainly focuses on the
 implementation compliance of the Platform Security Architecture(PSA).
 
+#######################################
+Mbed OS + Trusted Firmware-M Tests v1.2
+#######################################
+
+This specific branch supports additional patches required for integration
+of Mbed OS with Trusted Firmware-M Tests v1.2 implementation.
+
 ****************
 Folder Structure
 ****************
