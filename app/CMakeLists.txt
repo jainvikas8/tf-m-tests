@@ -115,9 +115,7 @@ target_link_libraries(tfm_api_ns
         tfm_ns_interface
     PRIVATE
         platform_ns
-        # CMSIS is currently only required to provide the NS client IDs. In
-        # future, this should probably be made more OS agnostic
-        $<$<BOOL:${TFM_NS_CLIENT_IDENTIFICATION}>:CMSIS_5_tfm_ns>
+        CMSIS_5_tfm_ns
 )
 
 ############################# PSA test integration #############################
